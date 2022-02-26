@@ -1,0 +1,183 @@
+# -*- coding: utf-8 -*
+import matplotlib.pyplot as plt
+import numpy as np
+from  matplotlib.colors import LinearSegmentedColormap
+from matplotlib import animation
+from scipy.ndimage import measurements
+from scipy.optimize import curve_fit
+plt.style.use('default')
+%matplotlib qt
+
+#ANDREW REDMOND
+ 
+def fitting_function(x, a, b):
+    '''
+    Power law function to fit my histogram of cluster sizes against.
+    Variables:
+        x - Midpoint of histogram bins.
+        a - Exponent parameter, to be found by fitting.
+        b - Constant multiplier, to be found by fitting.
+    Returns:
+        b*x^(-a)
+    '''
+    return b*pow(x, -a)
+def iterate(X, y, x, gp, fp):
+    '''
+    Function that performs a raster scan of the forest at each iteration in
+    its evolution and accordingly fills in a blank forest dependent on the
+    Drossel-Schwab forest fire model rules. Effectively, the forest is made
+    to evolve here.
+    Drossel-Schwab rules:
+        1. An empty square becomes a tree with probability gp.
+        2. A tree square sets on fire with probability fp.
+        3. A tree burns if atleast one neighbour is burning.
+        4. A burning cell turns into an empty cell.
+    Variables:
+        X - State of forest at a single point in time.
+        y, x - Forest dimensions. (Either 50, 50 or 200, 200.)
+        gp - Tree growth probability (0 < gp < 1)
+        fp - Lightning strike probability (0 < fp < 1)
+    Returns:
+        canvas - The next state of the forest in its evolution.
+    Note:
+        A 0 represents an empty square, a 1 represents a burning square and a 2 represents a
+        tree square.
+    '''
+    canvas = np.zeros((y, x)) #Rule 4.
+    for ix in range(0, x-1):
+        for iy in range(0, y-1):
+            if X[iy, ix] == 0 and np.random.random() <= gp: #Rule 1.
+                canvas[iy, ix] = 2
+            elif X[iy, ix] == 2: #Rule 3.
+                canvas[iy, ix] = 2
+                if np.random.random() <= fp: #Rule 2
+                        canvas[iy, ix] = 1
+                else: #Fire spreading.
+                    for i,j in ((-1,0), (0,-1),(0, 1), (1,0)):
+                        if X[iy+j, ix+i] == 1:
+                            canvas[iy, ix] = 1
+                            break
+    return canvas
+def clustering(X):
+    '''
+    Using Scipy to retrieve the size of tree clusters at each iteration.
+    Variables:
+        X - State of forest at a single point in time.
+    Returns:
+        (area, num), where area is the only value of concern, as its an
+        array of tree cluster sizes.
+    '''
+    lw, num = measurements.label(X)
+    area = measurements.sum(X, lw, index=np.arange(lw.max() + 1))
+    return (area, num)
+ 
+ 
+def animate(i):
+    '''
+    This function calls iterate and uses the return (the next stage of the
+    forest in its evolution) by either depicting it (choice == 1) or
+    by calling clustering and fitting_function to perform analysis on it
+    (choice == 2).
+    Variables:
+        i - This effectively behaves as an iterator in a for loop; it
+        increases by 1 each time it completes the code below, until it reaches
+        the prescribed value of the 'iterations' 'variable.
+    '''
+    if choice == 1:
+        im.set_data(animate.initial[0:n_rows-1, 0:n_columns-1])
+        animate.initial = iterate(animate.initial, n_rows, n_columns, growth_probability, lightning_probability)
+    elif choice == 2:
+        fire_count.append(np.count_nonzero(animate.initial == 1))#Counting only 1's in the array.
+        tree_count.append(np.count_nonzero(animate.initial == 2))#Countonly only 2's in the array.
+        n = np.where(animate.initial == 2, animate.initial, animate.initial*0)
+        n = np.where(animate.initial == 0, animate.initial, animate.initial - 1)
+        #The above two lines strip the forest of any fires and leaves only tree clusters
+        #We can then put this into the clustering function (if i>=100), which is the next line.
+        if i>= 100:
+            animate.c += list(clustering(n)[0])
+        animate.initial = iterate(animate.initial, n_rows, n_columns,
+                              growth_probability, lightning_probability)
+        if i == iterations - 1:
+            '''
+            This section is for graphing the amount of trees and fires over
+            the evolution of the forest fire.
+            '''
+            t = np.linspace(0, iterations, iterations + 1)
+            fig1, ax1 = plt.subplots(nrows = 1, ncols = 2)
+            ax1[0].plot(t, fire_count, 'r', label = 'Fire')
+            ax1[0].plot(t, tree_count, 'g', label = 'Trees')
+            ax1[0].legend()
+            ax1[0].set_title('Amount of trees/fires throughout simulation.')
+            ax1[0].set_xlabel('Iterations')
+            ax1[0].set_ylabel('Counts')
+            '''
+            This final section is for the histogram AND the curve fitting
+            against it.
+            Note: The 3 variables below can be changed however note that
+            doing so may result in a fit that no longer works due to some
+            histogram bins being empty - this creates discontinuity in the
+            histogram and the curve_fit module fails.
+            '''
+            bins = 38  
+            lower_range = 4
+            upper_range = 80
+            #Curve fitting.
+            bins_1 = np.linspace(lower_range, upper_range, bins+1)
+            y_data, bins_2 = np.histogram(animate.c, bins = bins_1)
+            x_data = np.array([0.5 * (bins_2[i] + bins_2[i+1]) for i in range(len(bins_2)-1)])
+            popt, pcov = curve_fit(fitting_function, xdata=x_data, ydata=y_data)
+            perr = np.sqrt(np.diag(pcov))
+            #Histogram plotting.
+            ax1[1].hist(animate.c, range = (lower_range, upper_range),
+            bins = bins, edgecolor = 'black')
+            ax1[1].set_title('Distribution of tree cluster sizes.')
+            ax1[1].set_xlabel('Cluster size')
+            ax1[1].set_ylabel('Frequency')
+            #Fitted curve plot, overlaying the histogram and using the
+            #midpoints of the histogram bins as input data for fitting_function.
+            x_test = np.linspace(lower_range, upper_range, bins + 1)
+            x_test += 0.5*(x_test[1] - x_test[0]) #Assuming uniform bin sizes.
+            ax1[1].plot(x_test, fitting_function(x_test, popt[0], popt[1]),
+                        'r', label = 'Fitted curve')
+            #The following two lines print the fitted paramters and their errors.
+            print(f'a = {popt[0]} +/- {perr[0]}')
+            print(f'b = {popt[1]} +/- {perr[1]}')
+            ax1[1].legend()
+            plt.show()    
+ 
+    
+#USER INPUT's
+ 
+growth_probability = float(input('Enter tree growth probability '))
+lightning_probability = float(input('Enter lightning strike probability '))
+scale = int(input('Enter 1 for 200 x 200 canvas, enter 2 for 50 x 50 canvas '))
+if scale == 1:
+    n_rows, n_columns = 200, 200
+else:
+    n_rows, n_columns = 50, 50
+initial = np.zeros((n_rows, n_columns))
+initial[1:n_rows-1, 1:n_columns-1] = np.random.choice([0,2], size = (n_rows-2, n_columns-2),
+                                     p = [1 - growth_probability, growth_probability])
+choice = int(input('Enter 1 for animation, enter 2 for analysis '))
+iterations = int(input('Enter the amount of iterations for the model to do '))
+print('-----------------------------------------------------------------------------')
+
+#CONTROL SEQUENCES BASED ON 'choice' VARIABLE.
+
+if choice == 1:
+    animate.initial, animate.iterations, animate.choice = initial, iterations, choice
+    fire_count, tree_count, c = [], [], []
+    animate.fire_count, animate.tree_count, animate.c = fire_count, tree_count, c
+    fig, ax = plt.subplots()
+    efg = LinearSegmentedColormap.from_list('rg',["w", "r", "g"], N=256)
+    im = ax.imshow(initial, cmap=efg)
+    a = animation.FuncAnimation(fig, animate, interval=100, frames=iterations, repeat = False)#This calls the animate function.
+    plt.title('Forest fire model simulation.')
+    plt.show()
+else:
+    fig, ax = plt.subplots()
+    ax.set_title('DO NOT CLOSE, A NEW WINDOW WILL OPEN WITH THE REQUIRED ANALYSIS.')
+    animate.initial, animate.iterations = initial, iterations
+    fire_count, tree_count, c = [], [], []
+    animate.fire_count, animate.tree_count, animate.c = fire_count, tree_count, c
+    a = animation.FuncAnimation(fig, animate, interval=100, frames=iterations, repeat = False) #This calls the animate function.
